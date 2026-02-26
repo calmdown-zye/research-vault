@@ -25,7 +25,7 @@ status: in-progress
 ## 실험 여정 타임라인
 
 ```
-OL/W2 분석 → v1 (pilot) → v2 (개선) → v3 (확장) → v4 (multi-seed) → 진단 & 다음 방향
+OL/W2 분석 → v1 (pilot) → v2 (개선) → v3 (확장) → v4 (multi-seed) → 진단 → v5 WPO (원인 규명)
 ```
 
 ### Phase 0: 통계 분석 (OL/W2)
@@ -218,35 +218,77 @@ multi-seed 결과를 놓고 원인을 분석한 결과, 네 가지 구조적 문
 
 ---
 
+### Phase 8: v5 — WPO (Support Mismatch 교정)
+
+> [[DPO_QWen2.5B-0.5B-Instruct(v5_WPO)|v5 WPO 노트]]
+
+| 항목 | 설정 |
+|------|------|
+| Method | WPO (sampled alignment) |
+| Seeds | [42, 456, 789] (v4와 동일 3개) |
+| Splits | 6 (v2와 동일) |
+| Hyperparams | v4와 동일 (2000 steps, batch 8, beta 0.1) |
+
+**핵심 변경**: DPO loss에 per-example weight를 곱함. weight = on-policy 정도. off-policy pair는 downweight.
+
+**Weight 분석 — PRISM 데이터가 얼마나 off-policy인가?**:
+- 평균 weight ~**0.20** (80%가 downweight됨)
+- 최소값 ~0.04 (극단적 off-policy pair는 거의 무시)
+- **정량적 증거**: Qwen-0.5B에게 GPT-4/Claude 응답은 자신의 생성 분포에서 매우 멀다
+
+**결과 — WPO vs DPO 비교 (3 seeds)**:
+
+| Split | Expected | WPO diff | WPO | DPO diff | DPO | Change |
+|-------|----------|----------|-----|----------|-----|--------|
+| S1_age | A > B | +3.39% | LEAN | +2.08% | LEAN | LEAN→LEAN |
+| **S2_pers** | **A > B** | **+2.34%** | **MATCH** | **+0.26%** | **MISMATCH** | **FIXED** |
+| **S3_safety** | **A < B** | **-2.34%** | **MATCH** | **+0.00%** | **MISMATCH** | **FIXED** |
+| S4_fam | explor. | +7.03% | — | +3.39% | — | — |
+| S5_behav | explor. | -1.30% | — | -4.43% | — | — |
+| S6_region | A = B | +0.78% | OK | +0.78% | OK | — |
+
+**핵심 발견**:
+
+1. **personalisation과 safety가 MISMATCH→MATCH로 전환** — WPO가 off-policy noise를 제거하자 OL 예측과 일치하는 신호가 복원됨
+2. **S2_personalisation**: DPO (-0.78%, +1.56%, +0.00%) mixed → WPO (+2.34%, +3.12%, +1.56%) 3/3 양수
+3. **S3_safety**: DPO (+3.12%, -4.69%, +1.56%) 2/3 OL 반대 → WPO (-1.56%, -3.12%, -2.34%) 3/3 음수
+4. **familiarity**: DPO +3.39% → WPO +7.03% (2배 증폭) — support와 무관한 가장 robust한 신호
+
+**결론**: **Support mismatch는 OL→DPO 전이 실패의 실재하는 원인이었다.** WPO로 off-policy pair를 downweight하면 통계 모델의 예측이 DPO에서 복원된다.
+
+---
+
 ## 현재 위치 요약
 
 ### 확립된 것
 1. OL에서 유저 특성별 score_gap 차이는 통계적으로 유의하다
-2. 하지만 DPO 학습 패턴으로의 전이는 대부분 실패한다 (MISMATCH)
+2. 표준 DPO에서는 이 전이가 대부분 실패한다 (MISMATCH)
 3. 이 실패는 단일 seed의 문제가 아니다 — multi-seed에서도 일관적으로 MISMATCH
-4. Cross-version(W2/OL)으로 재현되는 방향 패턴은 존재하나, OL 예측과 반대
+4. **v5 WPO**: support mismatch를 교정하면 personalisation, safety에서 MATCH 복원 (FIXED 2/4)
+5. **PRISM 데이터의 ~80%가 off-policy** (weight ~0.20) — support mismatch의 정량적 증거
 
-### 식별된 구조적 문제
-1. **Support mismatch**: PRISM 응답이 학습 모델의 support 밖
-2. **Source model confound**: 21개 모델 응답이 혼재, 그룹별 분포 미통제
-3. **Preference heterogeneity**: 그룹 내 선호 방향 비일관성
+### 해결된 / 진행 중인 구조적 문제
+1. ~~**Support mismatch**~~: **WPO로 교정 가능 확인** (v5에서 2 splits FIXED)
+2. **Source model confound**: 21개 모델 응답이 혼재, 그룹별 분포 미통제 (미해결)
+3. **Preference heterogeneity**: 그룹 내 선호 방향 비일관성 (미해결)
 4. **측정의 차이**: OL(유저의 주관적 score_gap) vs DPO pref_acc(모델의 logprob margin)
 
 ### 열린 질문
-1. Source model을 통제하면 confound가 제거되어 더 깨끗한 신호가 나오는가?
-2. WPO로 support mismatch를 교정하면 OL→DPO 전이가 개선되는가?
-3. WPO 후에도 MISMATCH라면 → preference heterogeneity가 근본 원인이라는 증거
-4. 궁극적으로 P(y|x,u)처럼 유저 조건부 학습이 필요한가? (personalized DPO)
+1. WPO를 5-seed로 확장하면 현재 3-seed 결과가 robust한가?
+2. Source model을 통제 + WPO 조합이면 더 많은 split이 MATCH 되는가?
+3. age split이 LEAN에 머무르는 이유는? (효과 자체가 약한가, 다른 confound?)
+4. 궁극적으로 P(y|x,u) 유저 조건부 학습이 필요한가? (personalized DPO)
 
 ---
 
 ## 다음 단계 (우선순위)
 
-- [ ] **v3 seed 42 완료** — GPU job 제출됨, 대기 중
+- [x] ~~**WPO 구현**~~ — 완료, personalisation/safety FIXED (v5)
+- [ ] **5-seed 확장** — seeds 123, 999 추가하여 3-seed 결과 robustness 확인
 - [ ] **Source model 분포 확인** — 각 유저 그룹별 모델 비율이 균일한지 점검
-- [ ] **WPO 구현** — `dpo_loss.py`에 weight 추가, 기존 실험 재현
-- [ ] **Source model 고정 실험** — zephyr-7b 또는 Llama-2 계열로 고정 후 비교
-- [ ] WPO + source model 통제 후에도 MISMATCH인지 확인 → heterogeneity 논의로 연결
+- [ ] **Source model 고정 + WPO** — zephyr-7b 고정 후 WPO 재실험
+- [ ] **Weight 분포 시각화** — 어떤 pair가 가장 많이 downweight 되는지 분석
+- [ ] WPO + source model 통제 후에도 남은 MISMATCH → heterogeneity 논의로 연결
 
 ---
 
@@ -255,6 +297,7 @@ multi-seed 결과를 놓고 원인을 분석한 결과, 네 가지 구조적 문
 - [[DPO_QWen2.5B-0.5B-Instruct(v2)|v2 (W2 splits, single seed)]]
 - [[DPO_QWen2.5B-0.5B-Instruct(v3)|v3 (OL splits, single seed)]]
 - [[DPO_QWen2.5B-0.5B-Instruct(v4)|v4 (multi-seed robustness)]]
+- [[DPO_QWen2.5B-0.5B-Instruct(v5_WPO)|v5 (WPO, support mismatch fix)]]
 - [WPO: Weighted Preference Optimization (EMNLP 2024)](https://arxiv.org/abs/2406.11827)
 - [UltraFeedback (ICML 2024)](https://arxiv.org/abs/2310.01377)
 - [MPO: Maximum Preference Optimization](https://arxiv.org/abs/2312.16430)
