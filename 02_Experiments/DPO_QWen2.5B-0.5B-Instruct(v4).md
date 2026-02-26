@@ -7,7 +7,7 @@ tags:
 date: "2026-02-24"
 model: Qwen/Qwen2.5-0.5B-Instruct
 dataset: PRISM (within-model pairs)
-status: v3-seeds-pending
+status: v3-seed42-pending
 ---
 
 # DPO on PRISM: Multi-Seed Robustness Experiment (v4)
@@ -51,7 +51,7 @@ status: v3-seeds-pending
 ### Multi-Seed Design
 - **Seeds**: [42, 123, 456, 789, 999]
 - **v2**: 5 seeds × (1 baseline + 6 splits × 2 groups) = **65 runs ✅ 완료**
-- **v3**: 5 seeds × (1 baseline + 8 splits × 2 groups) = **85 runs (seed 42, 999 missing)**
+- **v3**: 5 seeds × (1 baseline + 8 splits × 2 groups) = **85 runs (seed 42 missing)**
 - 각 seed에서 pref_acc tail 20% 평균으로 Group A - B diff를 계산
 - 5-seed mean diff, std, 방향 일관성(x/N)으로 판정
 
