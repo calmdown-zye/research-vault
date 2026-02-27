@@ -4,10 +4,10 @@ tags:
   - DPO
   - PRISM
   - overview
-date: "2026-02-26"
+date: "2026-02-27"
 status: in-progress
 ---
-
+              
 # DPO on PRISM: 연구 여정 전체 정리
 
 ## 큰 연구 질문
@@ -25,7 +25,7 @@ status: in-progress
 ## 실험 여정 타임라인
 
 ```
-OL/W2 분석 → v1 (pilot) → v2 (개선) → v3 (확장) → v4 (multi-seed) → 진단 → v5 WPO (원인 규명)
+OL/W2 분석 → v1 (pilot) → v2 (개선) → v3 (확장) → v4 (multi-seed) → 진단 → v5 WPO (v2) → v5b WPO (v3 확장)
 ```
 
 ### Phase 0: 통계 분석 (OL/W2)
@@ -258,36 +258,86 @@ multi-seed 결과를 놓고 원인을 분석한 결과, 네 가지 구조적 문
 
 ---
 
+### Phase 9: v5b — WPO on v3 OL Splits (8개 변수 확장)
+
+> [[DPO_QWen2.5B-0.5B-Instruct(v5b_WPO_v3)|v5b WPO 노트]]
+
+| 항목 | 설정 |
+|------|------|
+| Method | WPO (sampled alignment) |
+| Seeds | 42 (단일 seed, 시간 제약) |
+| Splits | v3 OL 7/8개 (S8_region 제외 — job 실패) |
+| 비교 기준 | DPO v3 5-seed reference |
+
+**목적**: v5가 v2의 6 splits만 다루었으므로, v3에서 새로 추가된 education, factuality, helpfulness, diversity에서도 WPO 효과를 검증.
+
+**결과 — WPO vs DPO (7 testable splits)**:
+
+| Split | OL 예측 | WPO | DPO | Change |
+|-------|--------|-----|-----|--------|
+| **S1_age** | A > B | +3.91% **MATCH** | -0.31% MISMATCH | **FIXED** |
+| S2_education | A > B | -5.47% MISMATCH | -1.88% MISMATCH | UNCHANGED |
+| **S3_pers** | A > B | +2.34% **MATCH** | -1.88% MISMATCH | **FIXED** |
+| S4_safety | A < B | +0.00% MISMATCH | +2.34% MISMATCH | UNCHANGED |
+| S5_factuality | A < B | +0.78% MISMATCH | +3.28% MISMATCH | UNCHANGED |
+| **S6_helpful** | A < B | -0.78% **WEAK** | +5.31% MISMATCH | **IMPROVED** |
+| S7_diversity | A > B | +3.12% MATCH | +1.41% MATCH | STABLE |
+
+**FIXED 2 + IMPROVED 1 + UNCHANGED 3 + STABLE 1 = 7 splits**
+
+**Cross-check (v2 WPO와 공통 splits)**:
+- **personalisation**: v2 +2.34% MATCH = v3 +2.34% MATCH — **완벽 재현**
+- **safety**: v2 MATCH → v3 MISMATCH — seed variance 의심 (단일 seed 한계)
+- **age**: v2 LEAN → v3 MATCH — 개선
+
+**Weight 시각화 핵심 발견**:
+- Weight는 score_gap이 아닌 **source model**에 의해 주로 결정됨
+- GPT-4/Claude 응답은 낮은 weight, 작은 모델 응답은 높은 weight
+- 그룹 간 weight 분포 차이 미미 → weight 자체가 split 결과 차이의 원인 아님
+
+**핵심 해석**:
+1. WPO가 **부분적으로** OL→DPO 전이를 개선 (3/7)
+2. personalisation이 **가장 robust한 WPO 신호** (v2/v3 동일 결과)
+3. education, factuality는 support 교정으로 해결 안 됨 → **heterogeneity가 주 원인**일 가능성
+4. helpfulness는 DPO +5.31%에서 WPO -0.78%로 **방향 전환** 성공
+
+---
+
 ## 현재 위치 요약
 
 ### 확립된 것
 1. OL에서 유저 특성별 score_gap 차이는 통계적으로 유의하다
 2. 표준 DPO에서는 이 전이가 대부분 실패한다 (MISMATCH)
 3. 이 실패는 단일 seed의 문제가 아니다 — multi-seed에서도 일관적으로 MISMATCH
-4. **v5 WPO**: support mismatch를 교정하면 personalisation, safety에서 MATCH 복원 (FIXED 2/4)
-5. **PRISM 데이터의 ~80%가 off-policy** (weight ~0.20) — support mismatch의 정량적 증거
+4. **v5 WPO**: support mismatch를 교정하면 personalisation, safety에서 MATCH 복원 (v2 splits, FIXED 2/4)
+5. **v5b WPO**: v3의 7개 splits로 확장. FIXED 2 + IMPROVED 1 = **3/7 개선** (age, personalisation, helpfulness)
+6. **personalisation이 가장 robust**: v2 WPO 3-seed +2.34% = v3 WPO 1-seed +2.34% — 완벽 재현
+7. **PRISM 데이터의 ~80%가 off-policy** (weight ~0.20), weight는 source model에 의해 결정
+8. **OL→DPO 전이 실패 원인은 복합적**: support mismatch(일부 해결) + heterogeneity(미해결) + source model confound(미해결)
 
 ### 해결된 / 진행 중인 구조적 문제
-1. ~~**Support mismatch**~~: **WPO로 교정 가능 확인** (v5에서 2 splits FIXED)
-2. **Source model confound**: 21개 모델 응답이 혼재, 그룹별 분포 미통제 (미해결)
-3. **Preference heterogeneity**: 그룹 내 선호 방향 비일관성 (미해결)
+1. ~~**Support mismatch**~~: **WPO로 부분 교정 확인** — personalisation, age, helpfulness에서 효과. education, factuality에서는 무효
+2. **Source model confound**: 21개 모델 응답이 혼재, weight 시각화에서 모델별 차이 확인 (미해결)
+3. **Preference heterogeneity**: education, factuality가 WPO로도 UNCHANGED → 이것이 남은 주 원인일 가능성 (미해결)
 4. **측정의 차이**: OL(유저의 주관적 score_gap) vs DPO pref_acc(모델의 logprob margin)
 
 ### 열린 질문
-1. WPO를 5-seed로 확장하면 현재 3-seed 결과가 robust한가?
-2. Source model을 통제 + WPO 조합이면 더 많은 split이 MATCH 되는가?
-3. age split이 LEAN에 머무르는 이유는? (효과 자체가 약한가, 다른 confound?)
+1. v5b safety가 v5와 불일치 (v5 MATCH vs v5b MISMATCH) — seed variance인가 split 구성 차이인가?
+2. Source model을 통제 + WPO 조합이면 education, factuality도 MATCH 되는가?
+3. education의 -5.47% (강한 역방향)은 seed 특이적인가, 구조적 문제인가?
 4. 궁극적으로 P(y|x,u) 유저 조건부 학습이 필요한가? (personalized DPO)
 
 ---
 
 ## 다음 단계 (우선순위)
 
-- [x] ~~**WPO 구현**~~ — 완료, personalisation/safety FIXED (v5)
-- [ ] **5-seed 확장** — seeds 123, 999 추가하여 3-seed 결과 robustness 확인
+- [x] ~~**WPO 구현 (v2 splits)**~~ — 완료, personalisation/safety FIXED (v5)
+- [x] ~~**WPO v3 splits 확장**~~ — 완료, 3/7 개선 확인 (v5b)
+- [x] ~~**Weight 분포 시각화**~~ — 완료, source model이 weight 결정 요인임을 확인
+- [ ] **v5b multi-seed 확장** — seed 456, 789 추가하여 safety 불일치/education -5.47% 검증
 - [ ] **Source model 분포 확인** — 각 유저 그룹별 모델 비율이 균일한지 점검
-- [ ] **Source model 고정 + WPO** — zephyr-7b 고정 후 WPO 재실험
-- [ ] **Weight 분포 시각화** — 어떤 pair가 가장 많이 downweight 되는지 분석
+- [ ] **Source model 고정 + WPO** — zephyr-7b 고정 후 education, factuality 재검증
+- [ ] Heterogeneity 정량화 — 그룹 내 선호 방향 일관성 지표 개발
 - [ ] WPO + source model 통제 후에도 남은 MISMATCH → heterogeneity 논의로 연결
 
 ---
@@ -297,7 +347,8 @@ multi-seed 결과를 놓고 원인을 분석한 결과, 네 가지 구조적 문
 - [[DPO_QWen2.5B-0.5B-Instruct(v2)|v2 (W2 splits, single seed)]]
 - [[DPO_QWen2.5B-0.5B-Instruct(v3)|v3 (OL splits, single seed)]]
 - [[DPO_QWen2.5B-0.5B-Instruct(v4)|v4 (multi-seed robustness)]]
-- [[DPO_QWen2.5B-0.5B-Instruct(v5_WPO)|v5 (WPO, support mismatch fix)]]
+- [[DPO_QWen2.5B-0.5B-Instruct(v5_WPO)|v5 (WPO, v2 splits)]]
+- [[DPO_QWen2.5B-0.5B-Instruct(v5b_WPO_v3)|v5b (WPO, v3 splits 확장)]]
 - [WPO: Weighted Preference Optimization (EMNLP 2024)](https://arxiv.org/abs/2406.11827)
 - [UltraFeedback (ICML 2024)](https://arxiv.org/abs/2310.01377)
 - [MPO: Maximum Preference Optimization](https://arxiv.org/abs/2312.16430)
